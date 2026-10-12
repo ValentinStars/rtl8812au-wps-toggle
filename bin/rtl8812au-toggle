@@ -14,6 +14,31 @@ STATE_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/rtl8812au_monitor.state"
 HELPER_BIN="/usr/local/bin/rtl8812au-monitor-helper"
 [ ! -x "$HELPER_BIN" ] && HELPER_BIN="/opt/rtl8812au-wps-toggle/bin/rtl8812au-monitor-helper"
 
+# Загрузка локализации и конфигурации
+CONFIG_FILE="${HOME}/.config/rtl8812au-toggle/config.env"
+[ ! -f "$CONFIG_FILE" ] && CONFIG_FILE="/opt/rtl8812au-wps-toggle/config.env"
+if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+fi
+
+# Значения по умолчанию, если не заданы в config.env
+NOTIFY_APP_NAME="${NOTIFY_APP_NAME:-RTL8812AU CyberLink}"
+NOTIFY_ON_TITLE="${NOTIFY_ON_TITLE:-🎯 RTL8812AU: Pentest Mode [ВКЛЮЧЕН]}"
+NOTIFY_ON_MSG="${NOTIFY_ON_MSG:-Интерфейс: <b>%IFACE%</b> [MONITOR]\nWireshark и Kitty открыты.\nОсновной интернет ноута активен.}"
+NOTIFY_OFF_TITLE="${NOTIFY_OFF_TITLE:-🟢 RTL8812AU: Обычный режим [ВЫКЛЮЧЕН]}"
+NOTIFY_OFF_MSG="${NOTIFY_OFF_MSG:-Пентест завершен, окна закрыты.\nИнтерфейс <b>%IFACE%</b> возвращен в NetworkManager.}"
+KITTY_TITLE="${KITTY_TITLE:-RTL8812AU Pentest Console [%IFACE%]}"
+WIRESHARK_PRE_DELAY="${WIRESHARK_PRE_DELAY:-0.5}"
+BANNER_SUBTITLE="${BANNER_SUBTITLE:-═════ RTL8812AU BOOTED // MONITOR MODE ACTIVE ═════}"
+HINT_TITLE="${HINT_TITLE:-[i] Быстрые команды:}"
+HINT_CMD1="${HINT_CMD1:-airodump-ng %IFACE%              # Обзор эфира 2.4 GHz}"
+HINT_CMD2="${HINT_CMD2:-airodump-ng --band a %IFACE%     # Обзор эфира 5 GHz}"
+HINT_CMD3="${HINT_CMD3:-aireplay-ng --test %IFACE%       # Проверка инъекции пакетов}"
+HINT_CMD4="${HINT_CMD4:-Нажмите кнопку WPS на свистке   # Завершить пентест и закрыть окна}"
+STATUS_READY="${STATUS_READY:-[✓] Среда готова к работе! Консоль открыта в интерактивном режиме.}"
+PROMPT_STYLE="${PROMPT_STYLE:-┌──[PENTEST]─[%IFACE%]─[MONITOR]\n└──╼ }"
+
 # ANSI Colors
 C_RESET="\e[0m"
 C_BOLD="\e[1m"
@@ -23,7 +48,7 @@ C_YELLOW="\e[1;33m"
 C_RED="\e[1;31m"
 C_MAGENTA="\e[1;35m"
 
-# Auto-export display session for desktop notifications and GUI apps
+# Автоэкспорт окружения GUI/Wayland
 export DISPLAY="${DISPLAY:-:0}"
 if [ -z "$WAYLAND_DISPLAY" ] && [ -e "${XDG_RUNTIME_DIR:-/run/user/1000}/wayland-0" ]; then
     export WAYLAND_DISPLAY="wayland-0"
@@ -38,7 +63,7 @@ send_notify() {
     local title="$3"
     local msg="$4"
     if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
-        notify-send -u "$urgency" -i "$icon" -a "RTL8812AU CyberLink" "$title" "$msg" 2>/dev/null || true
+        notify-send -u "$urgency" -i "$icon" -a "$NOTIFY_APP_NAME" "$title" "$msg" 2>/dev/null || true
     fi
 }
 
@@ -49,7 +74,7 @@ play_sound() {
     fi
 }
 
-# Dynamic interface discovery by driver and USB Vendor/Product ID
+# Динамический поиск сетевого интерфейса RTL8812AU
 find_rtl8812_iface() {
     local iface=""
     for dev in /sys/class/net/*; do
@@ -104,17 +129,27 @@ enable_monitor_mode() {
         return 1
     fi
 
-    # Запуск Wireshark (Live Packet Capture)
-    echo -e "${C_CYAN}[*] Запуск Wireshark на интерфейсе $iface...${C_RESET}"
+    # 1. СНАЧАЛА ЗАПУСКАЕМ WIRESHARK (на задний план)
+    echo -e "${C_CYAN}[*] [1/2] Запуск Wireshark на интерфейсе $iface...${C_RESET}"
     pkill -f "wireshark -k -i $iface" 2>/dev/null || true
     wireshark -k -i "$iface" >/dev/null 2>&1 &
     local ws_pid=$!
 
-    # Запуск Kitty с хакерской консолью (SKIP_HI=1 предотвращает перекрытие экрана ~/.hi)
-    echo -e "${C_CYAN}[*] Запуск Kitty Pentest Console...${C_RESET}"
+    # Пауза, чтобы Wireshark успел проинициализировать окно
+    sleep "$WIRESHARK_PRE_DELAY"
+
+    # 2. ЗАТЕМ ЗАПУСКАЕМ KITTY (поверх Wireshark, в фокусе)
+    echo -e "${C_CYAN}[*] [2/2] Запуск Kitty Pentest Console (на передний план)...${C_RESET}"
     pkill -f "rtl8812au-pentest" 2>/dev/null || true
 
-    kitty --class "rtl8812au-pentest" --title "RTL8812AU Pentest Console [$iface]" env SKIP_HI=1 NO_HI=1 bash -c "
+    local win_title="${KITTY_TITLE//%IFACE%/$iface}"
+    local p_style="${PROMPT_STYLE//%IFACE%/$iface}"
+    local h_cmd1="${HINT_CMD1//%IFACE%/$iface}"
+    local h_cmd2="${HINT_CMD2//%IFACE%/$iface}"
+    local h_cmd3="${HINT_CMD3//%IFACE%/$iface}"
+    local h_cmd4="${HINT_CMD4//%IFACE%/$iface}"
+
+    kitty --class "rtl8812au-pentest" --title "$win_title" env SKIP_HI=1 NO_HI=1 bash -c "
 clear
 echo -e '\e[1;38;2;255;40;50m'
 cat << 'ASCII'
@@ -124,28 +159,23 @@ cat << 'ASCII'
   ██╔══██╗   ██║   ██║     ██╔═══╝ ██╔══██╗ ██║██╔═══╝ ██╔══██║██║   ██║
   ██║  ██║   ██║   ███████╗███████╗╚█████╔╝ ██║███████╗██║  ██║╚██████╔╝
 ASCII
-echo -e '\e[1;38;2;255;75;80m       ═════ RTL8812AU BOOTED // MONITOR MODE ACTIVE ═════\e[0m'
+echo -e '\e[1;38;2;255;75;80m       $BANNER_SUBTITLE\e[0m'
 echo -e '\e[1;36m[*] Сетевой интерфейс:\e[0m \e[1;32m$iface\e[0m'
 echo -e '\e[1;36m[*] Чипсет:\e[0m           Realtek RTL8812AU (802.11a/b/g/n/ac 2T2R Dual-Band)'
 echo -e '\e[1;36m[*] Инъекция пакетов:\e[0m \e[1;32m100% Native Injection Working\e[0m'
-echo -e '\e[1;36m[*] Wireshark:\e[0m        \e[1;32mЗапущен на $iface (Live Capture)\e[0m'
-echo -e '\e[1;36m[*] Сеть ноутбука:\e[0m    \e[1;32mОсновной Wi-Fi АКТИВЕН (интернет не прерывался)\e[0m\n'
+echo -e '\e[1;36m[*] Wireshark:\e[0m        \e[1;32mЗапущен на $iface (Live Capture на заднем плане)\e[0m'
+echo -e '\e[1;36m[*] Сеть ноутбука:\e[0m    \e[1;32mОсновной Wi-Fi АКТИВЕН (интернет работает)\e[0m\n'
 
-echo -e '\e[1;33m━━━ Проверка процессов: airmon-ng check ━━━━━━━━━━━━━━━━━━━━\e[0m'
-sudo /usr/bin/airmon-ng check 2>/dev/null || true
-echo -e '\n\e[1;33m━━━ Вызов справки: aircrack-ng --help ━━━━━━━━━━━━━━━━━━━━━━\e[0m'
-aircrack-ng --help | head -n 25
-echo -e '\e[2m... (полная справка доступна по команде aircrack-ng --help)\e[0m'
-echo -e '\n\e[1;35m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m'
-echo -e '\e[1;32m[✓] Готово к боевым задачам! Консоль открыта в интерактивном режиме.\e[0m'
-echo -e '\e[1;36m[i] Быстрые команды:\e[0m'
-echo -e '    \e[1;33mairodump-ng $iface\e[0m              # Обзор эфира 2.4 GHz'
-echo -e '    \e[1;33mairodump-ng --band a $iface\e[0m     # Обзор эфира 5 GHz'
-echo -e '    \e[1;33maireplay-ng --test $iface\e[0m       # Проверка инъекции пакетов'
-echo -e '    \e[1;33mНажмите кнопку WPS на свистке\e[0m   # Завершить пентест и закрыть окна'
+echo -e '\e[1;35m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m'
+echo -e '\e[1;32m$STATUS_READY\e[0m'
+echo -e '\e[1;36m$HINT_TITLE\e[0m'
+echo -e '    \e[1;33m$h_cmd1\e[0m'
+echo -e '    \e[1;33m$h_cmd2\e[0m'
+echo -e '    \e[1;33m$h_cmd3\e[0m'
+echo -e '    \e[1;33m$h_cmd4\e[0m'
 echo -e '\e[1;35m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
 
-export PS1=\"\[\e[1;38;2;255;40;50m\]┌──[\[\e[1;36m\]PENTEST\[\e[1;38;2;255;40;50m\]]─[\[\e[1;32m\]$iface\[\e[1;38;2;255;40;50m\]]─[\[\e[1;33m\]MONITOR\[\e[1;38;2;255;40;50m\]]\n└──╼ \[\e[0m\]\"
+export PS1=\"\[\e[1;38;2;255;40;50m\]$p_style\[\e[0m\]\"
 exec bash -i
 " >/dev/null 2>&1 &
     local kitty_pid=$!
@@ -159,9 +189,9 @@ MODE=monitor
 EOF
 
     # Уведомление на рабочий стол
-    send_notify "normal" "security-high" \
-        "🎯 RTL8812AU: Pentest Mode [ВКЛЮЧЕН]" \
-        "Интерфейс: <b>$iface</b> [MONITOR]\nWireshark и Kitty открыты.\nОсновной интернет ноута не прерывался!\nНажмите WPS на свистке для выключения."
+    local notif_msg="${NOTIFY_ON_MSG//%IFACE%/$iface}"
+    local notif_title="${NOTIFY_ON_TITLE//%IFACE%/$iface}"
+    send_notify "normal" "security-high" "$notif_title" "$notif_msg"
 
     echo -e "${C_GREEN}[✓] Боевой режим успешно активирован!${C_RESET}"
 }
@@ -199,9 +229,9 @@ disable_monitor_mode() {
     rm -f "$STATE_FILE"
 
     # Уведомление на рабочий стол
-    send_notify "normal" "network-wireless-connected" \
-        "🟢 RTL8812AU: Обычный режим [ВЫКЛЮЧЕН]" \
-        "Пентест завершен, окна закрыты.\nИнтерфейс <b>$iface</b> возвращен в NetworkManager.\nКлиентский Wi-Fi активен."
+    local notif_msg="${NOTIFY_OFF_MSG//%IFACE%/$iface}"
+    local notif_title="${NOTIFY_OFF_TITLE//%IFACE%/$iface}"
+    send_notify "normal" "network-wireless-connected" "$notif_title" "$notif_msg"
 
     echo -e "${C_GREEN}[✓] RTL8812AU успешно возвращен в штатный режим!${C_RESET}"
 }
