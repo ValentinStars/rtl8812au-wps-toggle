@@ -1,0 +1,2 @@
+# Allow user to run rtl8812au mode switching helper without password
+ALL ALL=(ALL) NOPASSWD: /usr/local/bin/rtl8812au-monitor-helper, /opt/rtl8812au-wps-toggle/bin/rtl8812au-monitor-helper

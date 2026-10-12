@@ -1,0 +1,15 @@
+[Unit]
+Description=RTL8812AU Realtime Hardware WPS Button Listener
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/opt/rtl8812au-wps-toggle/daemon/rtl8812au-wps-daemon.py
+Restart=always
+RestartSec=2
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
