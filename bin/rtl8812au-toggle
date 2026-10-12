@@ -132,7 +132,7 @@ enable_monitor_mode() {
     # 1. СНАЧАЛА ЗАПУСКАЕМ WIRESHARK (на задний план)
     echo -e "${C_CYAN}[*] [1/2] Запуск Wireshark на интерфейсе $iface...${C_RESET}"
     pkill -f "wireshark.*-i $iface" 2>/dev/null || true
-    wireshark -C "Pentest-WiFi" -k -i "$iface" >/dev/null 2>&1 &
+    wireshark -C "${WIRESHARK_PROFILE:-Material-Dark}" -k -i "$iface" >/dev/null 2>&1 &
     local ws_pid=$!
 
     # Пауза, чтобы Wireshark успел проинициализировать окно
