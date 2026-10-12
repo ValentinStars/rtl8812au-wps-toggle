@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=RTL8812AU Pentest Toggle
+Comment=Toggle RTL8812AU between Managed and Monitor Mode (Wireshark & Aircrack)
+Exec=/opt/rtl8812au-wps-toggle/bin/rtl8812au-toggle
+Icon=security-high
+Terminal=false
+Type=Application
+Categories=Network;Security;Utility;
+Keywords=wifi;wlan;monitor;aircrack;pentest;rtl8812au;wps;
