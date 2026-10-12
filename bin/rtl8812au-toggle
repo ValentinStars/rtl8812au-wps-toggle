@@ -131,8 +131,8 @@ enable_monitor_mode() {
 
     # 1. СНАЧАЛА ЗАПУСКАЕМ WIRESHARK (на задний план)
     echo -e "${C_CYAN}[*] [1/2] Запуск Wireshark на интерфейсе $iface...${C_RESET}"
-    pkill -f "wireshark -k -i $iface" 2>/dev/null || true
-    wireshark -k -i "$iface" >/dev/null 2>&1 &
+    pkill -f "wireshark.*-i $iface" 2>/dev/null || true
+    wireshark -C "Pentest-WiFi" -k -i "$iface" >/dev/null 2>&1 &
     local ws_pid=$!
 
     # Пауза, чтобы Wireshark успел проинициализировать окно
@@ -214,7 +214,7 @@ disable_monitor_mode() {
 
     # Закрываем Wireshark
     echo -e "${C_YELLOW}[*] Закрываем Wireshark...${C_RESET}"
-    pkill -f "wireshark -k -i" 2>/dev/null || true
+    pkill -f "wireshark.*-i" 2>/dev/null || true
     [ -n "$ws_pid" ] && kill -9 "$ws_pid" 2>/dev/null || true
 
     # Переводим интерфейс обратно в Managed Mode
