@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# 🛰️ RTL8812AU Pentest & Daily Dual-Mode Toggle
+# High-Gain 802.11ac 2T2R Adapter Automation Suite
+#
+# Transitions:
+#   [1] MANAGED: Everyday high-speed Wi-Fi (NetworkManager managed)
+#   [2] MONITOR: Penetration testing mode (Packet Injection, Wireshark, Kitty)
+# ==============================================================================
+
+set -o pipefail
+
+STATE_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/rtl8812au_monitor.state"
+HELPER_BIN="/usr/local/bin/rtl8812au-monitor-helper"
+[ ! -x "$HELPER_BIN" ] && HELPER_BIN="/opt/rtl8812au-wps-toggle/bin/rtl8812au-monitor-helper"
+
+# ANSI Colors
+C_RESET="\e[0m"
+C_BOLD="\e[1m"
+C_CYAN="\e[1;36m"
+C_GREEN="\e[1;32m"
+C_YELLOW="\e[1;33m"
+C_RED="\e[1;31m"
+C_MAGENTA="\e[1;35m"
+
+# Auto-export display session for desktop notifications and GUI apps
+export DISPLAY="${DISPLAY:-:0}"
+if [ -z "$WAYLAND_DISPLAY" ] && [ -e "${XDG_RUNTIME_DIR:-/run/user/1000}/wayland-0" ]; then
+    export WAYLAND_DISPLAY="wayland-0"
+fi
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -e "${XDG_RUNTIME_DIR:-/run/user/1000}/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/1000}/bus"
+fi
+
+send_notify() {
+    local urgency="$1"
+    local icon="$2"
+    local title="$3"
+    local msg="$4"
+    if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+        notify-send -u "$urgency" -i "$icon" -a "RTL8812AU CyberLink" "$title" "$msg" 2>/dev/null || true
+    fi
+}
+
+play_sound() {
+    local sound="$1"
+    if [ -f "/usr/share/sounds/freedesktop/stereo/$sound" ]; then
+        paplay "/usr/share/sounds/freedesktop/stereo/$sound" 2>/dev/null &
+    fi
+}
+
+# Dynamic interface discovery by driver and USB Vendor/Product ID
+find_rtl8812_iface() {
+    local iface=""
+    for dev in /sys/class/net/*; do
+        local candidate
+        candidate=$(basename "$dev")
+        if [ -e "$dev/device/driver" ]; then
+            local drv
+            drv=$(basename "$(readlink "$dev/device/driver" 2>/dev/null || true)")
+            local uevent
+            uevent=$(cat "$dev/device/uevent" 2>/dev/null || true)
+            if [[ "$drv" =~ 8812 ]] || [[ "$uevent" =~ 0BDA/8812 ]] || [[ "$uevent" =~ 0bda/8812 ]]; then
+                iface="$candidate"
+                break
+            fi
+        fi
+    done
+
+    if [ -z "$iface" ]; then
+        for line in $(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}'); do
+            local sys_drv
+            sys_drv=$(readlink "/sys/class/net/$line/device/driver" 2>/dev/null || true)
+            if [[ "$sys_drv" =~ 8812 ]]; then
+                iface="$line"
+                break
+            fi
+        done
+    fi
+
+    echo "$iface"
+}
+
+# === ENABLE MONITOR MODE (PENTEST) ===
+enable_monitor_mode() {
+    local iface="$1"
+    echo -e "${C_BOLD}${C_YELLOW}[*] RTL8812AU обнаружен: ${C_CYAN}${iface}${C_RESET}"
+
+    # Звуковой сигнал и аппаратный импульс индикатора
+    play_sound "device-added.oga"
+    sudo "$HELPER_BIN" led-pulse 2>/dev/null &
+
+    # Изолируем ТОЛЬКО этот адаптер от NetworkManager (основной Wi-Fi ноута НЕ прерывается!)
+    echo -e "${C_YELLOW}[*] Изолируем $iface от NetworkManager (основной Wi-Fi работает без пауз)...${C_RESET}"
+    nmcli device set "$iface" managed no 2>/dev/null || true
+    sleep 0.15
+
+    # Переводим физический интерфейс в monitor mode
+    echo -e "${C_YELLOW}[*] Переключение $iface в режим монитора...${C_RESET}"
+    if ! sudo "$HELPER_BIN" monitor "$iface"; then
+        echo -e "${C_RED}[-] Ошибка включения режима монитора!${C_RESET}"
+        send_notify "critical" "dialog-error" "❌ Ошибка RTL8812AU" "Не удалось перевести $iface в режим монитора"
+        nmcli device set "$iface" managed yes 2>/dev/null || true
+        return 1
+    fi
+
+    # Запуск Wireshark (Live Packet Capture)
+    echo -e "${C_CYAN}[*] Запуск Wireshark на интерфейсе $iface...${C_RESET}"
+    pkill -f "wireshark -k -i $iface" 2>/dev/null || true
+    wireshark -k -i "$iface" >/dev/null 2>&1 &
+    local ws_pid=$!
+
+    # Запуск Kitty с хакерской консолью (SKIP_HI=1 предотвращает перекрытие экрана ~/.hi)
+    echo -e "${C_CYAN}[*] Запуск Kitty Pentest Console...${C_RESET}"
+    pkill -f "rtl8812au-pentest" 2>/dev/null || true
+
+    kitty --class "rtl8812au-pentest" --title "RTL8812AU Pentest Console [$iface]" env SKIP_HI=1 NO_HI=1 bash -c "
+clear
+echo -e '\e[1;38;2;255;40;50m'
+cat << 'ASCII'
+  ██████╗ ████████╗██╗     ██████╗  █████╗  ██╗██████╗  █████╗ ██╗   ██╗
+  ██╔══██╗╚══██╔══╝██║     ╚════██╗██╔══██╗███║╚════██╗██╔══██╗██║   ██║
+  ██████╔╝   ██║   ██║      █████╔╝╚█████╔╝╚██║ █████╔╝███████║██║   ██║
+  ██╔══██╗   ██║   ██║     ██╔═══╝ ██╔══██╗ ██║██╔═══╝ ██╔══██║██║   ██║
+  ██║  ██║   ██║   ███████╗███████╗╚█████╔╝ ██║███████╗██║  ██║╚██████╔╝
+ASCII
+echo -e '\e[1;38;2;255;75;80m       ═════ RTL8812AU BOOTED // MONITOR MODE ACTIVE ═════\e[0m'
+echo -e '\e[1;36m[*] Сетевой интерфейс:\e[0m \e[1;32m$iface\e[0m'
+echo -e '\e[1;36m[*] Чипсет:\e[0m           Realtek RTL8812AU (802.11a/b/g/n/ac 2T2R Dual-Band)'
+echo -e '\e[1;36m[*] Инъекция пакетов:\e[0m \e[1;32m100% Native Injection Working\e[0m'
+echo -e '\e[1;36m[*] Wireshark:\e[0m        \e[1;32mЗапущен на $iface (Live Capture)\e[0m'
+echo -e '\e[1;36m[*] Сеть ноутбука:\e[0m    \e[1;32mОсновной Wi-Fi АКТИВЕН (интернет не прерывался)\e[0m\n'
+
+echo -e '\e[1;33m━━━ Проверка процессов: airmon-ng check ━━━━━━━━━━━━━━━━━━━━\e[0m'
+sudo /usr/bin/airmon-ng check 2>/dev/null || true
+echo -e '\n\e[1;33m━━━ Вызов справки: aircrack-ng --help ━━━━━━━━━━━━━━━━━━━━━━\e[0m'
+aircrack-ng --help | head -n 25
+echo -e '\e[2m... (полная справка доступна по команде aircrack-ng --help)\e[0m'
+echo -e '\n\e[1;35m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m'
+echo -e '\e[1;32m[✓] Готово к боевым задачам! Консоль открыта в интерактивном режиме.\e[0m'
+echo -e '\e[1;36m[i] Быстрые команды:\e[0m'
+echo -e '    \e[1;33mairodump-ng $iface\e[0m              # Обзор эфира 2.4 GHz'
+echo -e '    \e[1;33mairodump-ng --band a $iface\e[0m     # Обзор эфира 5 GHz'
+echo -e '    \e[1;33maireplay-ng --test $iface\e[0m       # Проверка инъекции пакетов'
+echo -e '    \e[1;33mНажмите кнопку WPS на свистке\e[0m   # Завершить пентест и закрыть окна'
+echo -e '\e[1;35m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
+
+export PS1=\"\[\e[1;38;2;255;40;50m\]┌──[\[\e[1;36m\]PENTEST\[\e[1;38;2;255;40;50m\]]─[\[\e[1;32m\]$iface\[\e[1;38;2;255;40;50m\]]─[\[\e[1;33m\]MONITOR\[\e[1;38;2;255;40;50m\]]\n└──╼ \[\e[0m\]\"
+exec bash -i
+" >/dev/null 2>&1 &
+    local kitty_pid=$!
+
+    # Сохраняем состояние
+    cat << EOF > "$STATE_FILE"
+IFACE=$iface
+WIRESHARK_PID=$ws_pid
+KITTY_PID=$kitty_pid
+MODE=monitor
+EOF
+
+    # Уведомление на рабочий стол
+    send_notify "normal" "security-high" \
+        "🎯 RTL8812AU: Pentest Mode [ВКЛЮЧЕН]" \
+        "Интерфейс: <b>$iface</b> [MONITOR]\nWireshark и Kitty открыты.\nОсновной интернет ноута не прерывался!\nНажмите WPS на свистке для выключения."
+
+    echo -e "${C_GREEN}[✓] Боевой режим успешно активирован!${C_RESET}"
+}
+
+# === DISABLE MONITOR MODE (NORMAL/MANAGED) ===
+disable_monitor_mode() {
+    local iface="$1"
+    local ws_pid="$2"
+    local kitty_pid="$3"
+
+    echo -e "${C_BOLD}${C_YELLOW}[*] Отключаем Monitor Mode на интерфейсе: ${C_CYAN}${iface}${C_RESET}"
+
+    # Звуковой сигнал выключения
+    play_sound "device-removed.oga"
+
+    # Закрываем окно Kitty
+    echo -e "${C_YELLOW}[*] Закрываем Kitty Pentest Console...${C_RESET}"
+    pkill -f "rtl8812au-pentest" 2>/dev/null || true
+    [ -n "$kitty_pid" ] && kill -9 "$kitty_pid" 2>/dev/null || true
+
+    # Закрываем Wireshark
+    echo -e "${C_YELLOW}[*] Закрываем Wireshark...${C_RESET}"
+    pkill -f "wireshark -k -i" 2>/dev/null || true
+    [ -n "$ws_pid" ] && kill -9 "$ws_pid" 2>/dev/null || true
+
+    # Переводим интерфейс обратно в Managed Mode
+    echo -e "${C_YELLOW}[*] Переводим $iface в Managed Mode...${C_RESET}"
+    sudo "$HELPER_BIN" managed "$iface" 2>/dev/null || true
+
+    # Возвращаем управление адаптером в NetworkManager (БЕЗ перезапуска всей службы сети!)
+    echo -e "${C_YELLOW}[*] Возвращаем $iface в NetworkManager...${C_RESET}"
+    nmcli device set "$iface" managed yes 2>/dev/null || true
+
+    # Удаляем файл состояния
+    rm -f "$STATE_FILE"
+
+    # Уведомление на рабочий стол
+    send_notify "normal" "network-wireless-connected" \
+        "🟢 RTL8812AU: Обычный режим [ВЫКЛЮЧЕН]" \
+        "Пентест завершен, окна закрыты.\nИнтерфейс <b>$iface</b> возвращен в NetworkManager.\nКлиентский Wi-Fi активен."
+
+    echo -e "${C_GREEN}[✓] RTL8812AU успешно возвращен в штатный режим!${C_RESET}"
+}
+
+# --- Главная точка входа ---
+IFACE=$(find_rtl8812_iface)
+if [ -z "$IFACE" ]; then
+    echo -e "${C_RED}[-] RTL8812AU адаптер не обнаружен! Проверьте USB подключение.${C_RESET}"
+    send_notify "critical" "dialog-warning" "⚠️ RTL8812AU не найден" "Убедитесь, что USB-адаптер вставлен в порт."
+    exit 1
+fi
+
+CURRENT_TYPE=$(iw dev "$IFACE" info 2>/dev/null | awk '$1=="type"{print $2}')
+
+if [ -f "$STATE_FILE" ] || [ "$CURRENT_TYPE" = "monitor" ]; then
+    if [ -f "$STATE_FILE" ]; then
+        source "$STATE_FILE"
+    fi
+    disable_monitor_mode "$IFACE" "$WIRESHARK_PID" "$KITTY_PID"
+else
+    enable_monitor_mode "$IFACE"
+fi
